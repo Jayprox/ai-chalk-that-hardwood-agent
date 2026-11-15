@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Props Research</title>
+<link rel="stylesheet" href="/static/dash.css">
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div class="brand">
+      <h1>Props Research</h1>
+      <span id="date" class="muted"></span>
+      <span class="unvalidated">Research dashboard · unvalidated</span>
+    </div>
+    <div class="status"><span id="dot" class="dot"></span><span id="refresh">Loading…</span><a class="chatlink" href="/">Chat</a></div>
+  </header>
+  <nav id="tabs" class="tabs" aria-label="Markets"></nav>
+  <div id="notice" class="notice" hidden></div>
+  <main id="app" aria-live="polite"></main>
+</div>
+<script src="/static/dash.js"></script>
+</body>
+</html>

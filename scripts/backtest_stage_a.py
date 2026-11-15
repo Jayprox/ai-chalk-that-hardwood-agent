@@ -38,28 +38,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
-STAT_KEYS = ["pts", "reb", "ast", "fg3m", "stl", "blk"]
-MARKET_STATS = {
-    "pts": ("pts",), "reb": ("reb",), "ast": ("ast",), "fg3m": ("fg3m",), "stl": ("stl",), "blk": ("blk",),
-    "pa": ("pts", "ast"), "pr": ("pts", "reb"), "ra": ("reb", "ast"), "pra": ("pts", "reb", "ast"),
-    "stocks": ("stl", "blk"),
-}
+from app.simulation import (STAT_KEYS, MARKET_STATS, Params, League, league_params, simulate_player, prob_over, is_played as _played)  # noqa: F401
+
 BOARD_MARKETS = ["pts", "reb", "ast", "fg3m", "stl", "blk"]  # used only to find which players to load
-
-
-@dataclass
-class Params:
-    min_prior: int = 5            # earlier games needed before a prop is simulated
-    prior_minutes: float = 100.0  # strength of the pull toward the league per-minute rate (about 3 games)
-    min_sd: float = 3.0           # floor on the minutes standard deviation
-    draws: int = 4000
-    seed: int = 7
-
-
-@dataclass
-class League:
-    rate: Dict[str, float] = field(default_factory=dict)   # stat per minute
-    alpha: Dict[str, float] = field(default_factory=dict)  # negative-binomial dispersion (variance = mu + alpha * mu^2)
 
 
 # --------------------------------------------------------------------------- results and integrity
@@ -81,9 +62,6 @@ def outcome(actual: float, line: float) -> str:
         return "under"
     return "push"
 
-
-def _played(g: dict) -> bool:
-    return (g.get("minutes") or 0) > 0
 
 
 def check_results(players: Dict[str, Tuple[str, List[dict]]], max_samples: int = 6) -> dict:
@@ -115,62 +93,8 @@ def check_results(players: Dict[str, Tuple[str, List[dict]]], max_samples: int =
             "no_stored_result": no_result, "props_on_games_not_played": dnp_with_props, "samples": samples}
 
 
-# --------------------------------------------------------------------------- model
-
-def league_params(players: Iterable[List[dict]]) -> League:
-    players = [[g for g in logs if _played(g)] for logs in players]
-    tot_min = sum(g["minutes"] for logs in players for g in logs)
-    lg = League()
-    if tot_min <= 0:
-        raise ValueError("no minutes played in the data")
-    for k in STAT_KEYS:
-        lg.rate[k] = sum((g.get(k) or 0) for logs in players for g in logs) / tot_min
-        num = den = 0.0
-        for logs in players:
-            n = len(logs)
-            m_sum = sum(g["minutes"] for g in logs)
-            if n < 3 or m_sum <= 0:
-                continue
-            r = sum((g.get(k) or 0) for g in logs) / m_sum  # this player's own season rate
-            corr = n / (n - 1)                              # degrees-of-freedom correction for the in-sample mean
-            for g in logs:
-                mu = r * g["minutes"]
-                y = g.get(k) or 0
-                num += corr * (y - mu) ** 2 - mu
-                den += mu ** 2
-        lg.alpha[k] = min(max(num / den, 0.02), 1.5) if den > 0 else 0.1
-    return lg
-
-
-def simulate_player(prior: List[dict], lg: League, params: Params, rng: np.random.Generator) -> Optional[Dict[str, np.ndarray]]:
-    """Draws of every stat for one upcoming game, using only the player's earlier games."""
-    played = [g for g in prior if _played(g)]
-    if len(played) < params.min_prior:
-        return None
-    mins = np.array([g["minutes"] for g in played], dtype=float)
-    sd = max(params.min_sd, float(mins.std(ddof=1)))
-    m = np.clip(rng.normal(float(mins.mean()), sd, params.draws), 0.0, 48.0)
-    tot_min = float(mins.sum())
-    out: Dict[str, np.ndarray] = {}
-    for k in STAT_KEYS:
-        s = float(sum((g.get(k) or 0) for g in played))
-        rate = (s + params.prior_minutes * lg.rate[k]) / (tot_min + params.prior_minutes)
-        mu = rate * m
-        r = 1.0 / lg.alpha[k]
-        p = r / (r + mu)
-        out[k] = rng.negative_binomial(r, p).astype(float)
-    return out
-
-
-def prob_over(draws: np.ndarray, line: float) -> Optional[float]:
-    """P(over) given the result is not a push (a whole-number line can push)."""
-    push = float((draws == line).mean())
-    if push >= 1.0:
-        return None
-    return float((draws > line).mean()) / (1.0 - push)
-
-
-def run_backtest(players: Dict[str, Tuple[str, List[dict]]], params: Params, lg: Optional[League] = None) -> List[dict]:
+def run_backtest(players: Dict[str, Tuple[str, List[dict]]], params: Params, lg: Optional[League] = None,
+                 last: Optional[Dict[str, List[dict]]] = None) -> List[dict]:
     rng = np.random.default_rng(params.seed)
     sorted_players = {pid: (name, sorted(logs, key=lambda g: g.get("date") or "")) for pid, (name, logs) in players.items()}
     lg = lg or league_params(logs for _n, logs in sorted_players.values())
@@ -181,7 +105,7 @@ def run_backtest(players: Dict[str, Tuple[str, List[dict]]], params: Params, lg:
             if not props or not _played(g):
                 continue
             prior = logs[:i]
-            sim = simulate_player(prior, lg, params, rng)
+            sim = simulate_player(prior, lg, params, rng, (last or {}).get(pid))
             if sim is None:
                 continue
             for market, p in props.items():
