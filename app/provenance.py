@@ -13,7 +13,9 @@ from app.config import ROOT
 CORE_FILES = ["app/simulation.py", "app/minutes_model.py", "app/sim.py", "app/signal.py", "app/calibration.py", "app/baseline.py",
               "app/protocol.py", "app/ledger.py", "app/record.py", "app/settle.py", "app/coverage.py", "app/analysis.py", "app/provenance.py",
               "app/scheduler.py", "app/config.py", "app/collector.py", "app/sim_fit.json", "scripts/_ledger_cli.py", "scripts/ledger_check.py",
-              "scripts/ledger_daily.py", "scripts/settle.py", "scripts/freeze.py", "scripts/prospective_analysis.py"]
+              "scripts/ledger_daily.py", "scripts/settle.py", "scripts/freeze.py", "scripts/prospective_analysis.py",
+              # input-processing and dependency definitions that can change results (added before activation)
+              "app/store.py", "app/hardwood.py", "requirements.txt"]
 
 
 def sha256_bytes(b: bytes) -> str:

@@ -23,7 +23,7 @@ The recorded `line`, `over_price`, `under_price`, `fetched_at` and snapshot kind
 
 ## 4. Provenance on every record
 
-`sim_version`, SHA-256 of `app/sim_fit.json`, the full parameter set, calibration slope, `code_sha` (hash of the hashes of the core files listed in `app/provenance.py`, including the analysis, settlement and coverage code), git commit, protocol version, freeze id, previous-row hash and row hash. The ledger is an append-only SQLite file (`data/ledger/ledger.db`, WAL, synchronous FULL) with triggers rejecting UPDATE and DELETE on every table, a hash chain, and a JSON-lines mirror (`data/ledger/mirror/`). It is separate from the dashboard store.
+`sim_version`, SHA-256 of `app/sim_fit.json`, the full parameter set, calibration slope, `code_sha` (hash of the hashes of the core files listed in `app/provenance.py`, including the analysis, settlement and coverage code, the store and Hardwood client that process inputs, and `requirements.txt`), git commit, protocol version, freeze id, previous-row hash and row hash. The ledger is an append-only SQLite file (`data/ledger/ledger.db`, WAL, synchronous FULL) with triggers rejecting UPDATE and DELETE on every table, a hash chain, and a JSON-lines mirror (`data/ledger/mirror/`). It is separate from the dashboard store.
 
 ## 5. Eligibility independent of collection success (correction 4)
 

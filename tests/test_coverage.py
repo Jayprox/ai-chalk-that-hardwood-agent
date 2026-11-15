@@ -177,7 +177,10 @@ def test_freeze_manifest_is_complete_and_contains_no_credentials():
     assert man["constants"]["ENDPOINT_GAMES"] == 300 and man["constants"]["TARGET_B"] == 3.0 and man["constants"]["GATE_A"] == 0.02
     files = man["fingerprint"]["files"]
     assert all(files[f] for f in ("app/analysis.py", "app/settle.py", "app/coverage.py", "app/record.py", "app/ledger.py", "app/baseline.py", "app/sim_fit.json",
-                                  "scripts/prospective_analysis.py", "scripts/freeze.py"))
+                                  "scripts/prospective_analysis.py", "scripts/freeze.py", "app/store.py", "app/hardwood.py", "requirements.txt"))
+    from app.provenance import CORE_FILES
+    assert {"app/store.py", "app/hardwood.py", "requirements.txt"} <= set(CORE_FILES)      # input processing and dependency definitions are hashed
+    assert all((ROOT / f).is_file() for f in CORE_FILES)                                    # every hashed file exists (so it can be tracked)
     assert man["fingerprint"]["slope"] == 0.2 and man["fingerprint"]["fit_sha256"]
 
 
