@@ -19,6 +19,17 @@ from _ledger_cli import ROOT, launchd_plist, notify, open_ledger, settings
 from app.coverage import coverage_report, dry_run_acceptance, health_report, integrity_report, replay_sample
 
 
+def verdict(problems, last_tick, rows, expected_games) -> str:
+    """One line that never presents "nothing observed yet" as an evaluated success."""
+    if problems:
+        return "PROBLEMS:"
+    if last_tick is None and not rows and not expected_games:
+        return "NOT YET VERIFIED: no observations yet (no recorder tick, no expected games, no records)"
+    if not expected_games:
+        return "NO FAILURES, BUT NOT YET EVALUATED: no game has tipped in this scope, so coverage is not judged"
+    return "RECORDING HEALTH PASS (evaluated against the games that have tipped)"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--scope", choices=("dry", "counted", "all"), default="all")
@@ -77,9 +88,8 @@ def main() -> int:
         print("settlement (status counts only):", cov["settlement"]["by_status"] or "nothing matured yet")
         if rep:
             print(f"replay: {rep['checked']} checked, {len(rep['mismatches'])} mismatches")
-        if not cov["expected_games"]:
-            print("note: no game has tipped in this scope yet, so coverage is not judged")
-        print("PROBLEMS:" if problems else "ALL CHECKS PASS")
+        print(verdict(problems, health["last_tick"], integ["rows"], cov["expected_games"]))
+        print("(recording health only; dry-run acceptance is separate: --scope dry --from-date D1 --to-date D2 --stage recording|final)")
         for p in problems:
             print("  -", p)
     if problems and a.notify:

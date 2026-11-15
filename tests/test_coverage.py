@@ -201,6 +201,18 @@ def test_cli_refuses_to_run_the_analysis_before_a_freeze_or_endpoint(tmp_path):
     out = json.loads(r.stdout)
     assert r.returncode == 0 and out["integrity"]["rows"] == 0 and out["coverage"]["expected_games"] == 0 and out["coverage"]["ok"] is False   # nothing to judge yet
     assert run("ledger_check.py", "--require-data").returncode == 1
+    txt = run("ledger_check.py").stdout
+    assert "ALL CHECKS PASS" not in txt and "recording health only" in txt           # an empty ledger is never reported as a pass
+
+
+def test_verdict_separates_no_observations_from_evaluated_health():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    v = importlib.import_module("ledger_check").verdict
+    assert v([], None, 0, 0).startswith("NOT YET VERIFIED")
+    assert v([], "2026-11-21T00:00:00Z", 0, 0).startswith("NO FAILURES, BUT NOT YET EVALUATED")
+    assert v([], "2026-11-21T00:00:00Z", 40, 0).startswith("NO FAILURES, BUT NOT YET EVALUATED")      # records but no tipped expected game
+    assert v([], "2026-11-21T00:00:00Z", 40, 3).startswith("RECORDING HEALTH PASS")
+    assert v(["x"], None, 0, 0) == "PROBLEMS:"
 
 
 def test_launchd_jobs_are_valid_plists_and_scripts_print_them(tmp_path):

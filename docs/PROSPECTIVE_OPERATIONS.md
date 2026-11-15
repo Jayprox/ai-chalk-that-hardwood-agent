@@ -2,7 +2,11 @@
 
 Host: **the Pro** (the machine that runs the scheduler). "Pro terminal" means the repo folder, with the project's Python.
 
-**Nothing here is switched on yet.** The ledger stays disabled (`LEDGER_ENABLED` unset or false) until JD authorizes enabling it and installing the helper jobs. Sleep settings are JD's own change; nothing in the repo alters them.
+**Where the operating checkout lives.** `/Users/jayprox_pro/Projects/ai-chalk-that-hardwood-agent` (own `.venv`, own `.env`, own `data/` and `logs/`). Do not run the dry run from `~/Documents`, `~/Desktop`, `~/Downloads` or an iCloud folder: macOS blocks launchd jobs from reading those, and the fix is to move the checkout, not to grant broad disk permissions. `scripts/migrate_operating_checkout.sh` makes that move safely (clone at the pushed commit, rebuilt venv with the same package versions, `.env` copied with mode 600, ledger copied through the SQLite online backup and verified, the three jobs re-pointed). Every `.venv/bin/python scripts/...` command below is run from that folder. The original checkout is kept for rollback until JD approves cleanup.
+
+**Health wording.** `ledger_check.py` ends with one of: `PROBLEMS:`, `NOT YET VERIFIED: no observations yet`, `NO FAILURES, BUT NOT YET EVALUATED`, or `RECORDING HEALTH PASS`. Only the last means games were evaluated, and it is recording health only; dry-run acceptance is the separate `--stage` check.
+
+**Nothing here is switched on until the activation step.** The ledger stays disabled (`LEDGER_ENABLED` unset or false) until JD authorizes enabling it and installing the helper jobs. Sleep settings are JD's own change; nothing in the repo alters them.
 
 ## High-level version
 
