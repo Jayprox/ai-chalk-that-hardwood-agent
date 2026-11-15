@@ -45,6 +45,7 @@ def main() -> int:
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--record", action="store_true")
     ap.add_argument("--dry-from", help="first full slate date (ET, YYYY-MM-DD) of the dry run; earlier games are not judged")
+    ap.add_argument("--dry-to", help="last ET date (inclusive) of the fixed two-slate acceptance cohort; must be given with --dry-from")
     ap.add_argument("--commit", help="the git commit that contains docs/freeze/manifest.json")
     a = ap.parse_args()
     if a.build == a.record:
@@ -66,6 +67,8 @@ def main() -> int:
         problems.append("--commit is required")
     if not a.dry_from:
         problems.append("--dry-from is required (the first full slate date of the dry run)")
+    if not a.dry_to:
+        problems.append("--dry-to is required (the last date of the fixed two-slate acceptance cohort)")
     if a.commit and gi["commit"] != a.commit:
         problems.append(f"HEAD is {str(gi['commit'])[:12]}, not the commit you named")
     if gi["clean"] is not True:
@@ -78,7 +81,7 @@ def main() -> int:
         if ledger.latest_freeze():
             problems.append("a freeze record already exists; a changed test needs a new ledger")
         now = _now()
-        acc = dry_run_acceptance(ledger, a.dry_from, now) if a.dry_from else {"final": {"reasons": []}}
+        acc = dry_run_acceptance(ledger, a.dry_from, now, a.dry_to) if a.dry_from else {"final": {"reasons": []}}
         problems += acc["final"]["reasons"]
         if problems:
             print("NOT FROZEN:")

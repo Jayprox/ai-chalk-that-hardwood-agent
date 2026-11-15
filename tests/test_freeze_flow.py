@@ -98,21 +98,21 @@ def test_freeze_refuses_until_every_precondition_holds_then_records_once(frozen_
     assert run("--build") == 0 and (tmp / "manifest.json").exists()
     assert run("--record") == 1 and "--commit is required" in capsys.readouterr().out
     assert run("--record", "--commit", "abc123") == 1 and "--dry-from is required" in capsys.readouterr().out
-    assert run("--record", "--commit", "other", "--dry-from", DATE) == 1 and "not the commit you named" in capsys.readouterr().out
+    assert run("--record", "--commit", "other", "--dry-from", DATE, "--dry-to", DAY2) == 1 and "not the commit you named" in capsys.readouterr().out
     monkeypatch.setattr(freeze, "git_info", lambda *a, **k: {"commit": "abc123", "clean": False})
-    assert run("--record", "--commit", "abc123", "--dry-from", DATE) == 1 and "untracked or has uncommitted" in capsys.readouterr().out
+    assert run("--record", "--commit", "abc123", "--dry-from", DATE, "--dry-to", DAY2) == 1 and "untracked or has uncommitted" in capsys.readouterr().out
     monkeypatch.setattr(freeze, "git_info", lambda *a, **k: {"commit": "abc123", "clean": True})
     (tmp / "manifest.json").write_text("{}")                                    # a manifest that does not match the code
-    assert run("--record", "--commit", "abc123", "--dry-from", DATE) == 1 and "does not match the current code" in capsys.readouterr().out
+    assert run("--record", "--commit", "abc123", "--dry-from", DATE, "--dry-to", DAY2) == 1 and "does not match the current code" in capsys.readouterr().out
     assert run("--build") == 0
-    assert run("--record", "--commit", "abc123", "--dry-from", DATE) == 0
+    assert run("--record", "--commit", "abc123", "--dry-from", DATE, "--dry-to", DAY2) == 0
     out = capsys.readouterr().out
     assert "first counted date 2026-11-25" in out
     L2 = Ledger(tmp / "l.db", tmp / "m")
     fr = L2.latest_freeze()
     assert fr["first_counted_date"] == "2026-11-25" and fr["git_commit"] == "abc123" and json.loads(fr["manifest_json"])["protocol"] == P.PROTOCOL_VERSION
     L2.close()
-    assert run("--record", "--commit", "abc123", "--dry-from", DATE) == 1 and "already exists" in capsys.readouterr().out
+    assert run("--record", "--commit", "abc123", "--dry-from", DATE, "--dry-to", DAY2) == 1 and "already exists" in capsys.readouterr().out
 
 
 def test_freeze_refuses_a_dry_run_with_one_slate_date(tmp_path, monkeypatch, capsys):
@@ -125,7 +125,7 @@ def test_freeze_refuses_a_dry_run_with_one_slate_date(tmp_path, monkeypatch, cap
     monkeypatch.setattr(freeze, "git_info", lambda *a, **k: {"commit": "abc", "clean": True})
     monkeypatch.setattr(sys, "argv", ["freeze.py", "--build"])
     freeze.main()
-    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc", "--dry-from", DATE])
+    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc", "--dry-from", DATE, "--dry-to", DAY2])
     assert freeze.main() == 1 and "at least 2 are required" in capsys.readouterr().out
 
 
@@ -134,7 +134,7 @@ def test_records_after_the_freeze_count_and_the_analysis_runs_once(frozen_env, m
     L.close()
     monkeypatch.setattr(sys, "argv", ["freeze.py", "--build"])
     freeze.main()
-    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc123", "--dry-from", DATE])
+    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc123", "--dry-from", DATE, "--dry-to", DAY2])
     assert freeze.main() == 0
     L = Ledger(tmp / "l.db", tmp / "m")
     n_dry = len(L.records())
@@ -236,7 +236,7 @@ def test_freeze_refuses_when_nothing_has_matured(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(freeze, "git_info", lambda *a, **k: {"commit": "abc", "clean": True})
     monkeypatch.setattr(sys, "argv", ["freeze.py", "--build"])
     freeze.main()
-    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc", "--dry-from", DATE])
+    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc", "--dry-from", DATE, "--dry-to", DAY2])
     assert freeze.main() == 1 and "have not matured" in capsys.readouterr().out
     L = Ledger(tmp_path / "l.db")
     assert L.latest_freeze() is None
@@ -261,3 +261,34 @@ def test_git_clean_is_judged_only_on_the_hashed_files(tmp_path):
     (tmp_path / "b.py").write_text("y")
     g("checkout", "a.py")
     assert git_info(tmp_path, paths=["a.py", "b.py"])["clean"] is False         # a hashed file that was never committed
+
+
+def test_fixed_cohort_stops_later_slate_dates_from_holding_maturity_out_of_reach(tmp_path):
+    L = Ledger(tmp_path / "l.db", tmp_path / "m")
+    run_dry_days(L)
+    late = TIP2 + timedelta(days=2)                                            # a third slate date the recorder keeps adding (recorded, not matured)
+    seed_game(L, game="g-3", date="2026-11-23", tip=late, n_players=12, status="scheduled")
+    after = MATURED + timedelta(hours=1)
+    settle_all(L, MATURED)
+    open_ended = dry_run_acceptance(L, DATE, after)["final"]
+    assert not open_ended["ok"] and any("have not matured" in r for r in open_ended["reasons"])            # the growing window never matures
+    fixed = dry_run_acceptance(L, DATE, after, DAY2)
+    assert fixed["final"]["ok"], fixed["final"]["reasons"]
+    assert fixed["slate_dates"] == [DATE, DAY2] and fixed["to_date"] == DAY2
+    # the cohort does not weaken any rule: an unsettled contract inside the cohort still blocks it
+    L2 = Ledger(tmp_path / "l2.db", tmp_path / "m2")
+    run_dry_days(L2)
+    L2.add_settle_run(ts(MATURED), {"games": 2, "settled": 0, "changed": 0, "undecided": 0, "errors": []})
+    assert not dry_run_acceptance(L2, DATE, after, DAY2)["final"]["ok"]
+    assert not dry_run_acceptance(L, DATE, TIP2 + timedelta(hours=6), DAY2)["final"]["ok"]                  # nothing matured yet in the cohort
+
+
+def test_freeze_requires_the_fixed_cohort_end_date(tmp_path, monkeypatch, capsys):
+    L = Ledger(tmp_path / "l.db", tmp_path / "m")
+    run_dry_days(L)
+    L.close()
+    monkeypatch.setattr(freeze, "_now", lambda: MATURED)
+    monkeypatch.setattr(freeze, "settings", lambda: type("S", (), {"ledger_path": tmp_path / "l.db", "ledger_mirror_dir": tmp_path / "m"})())
+    monkeypatch.setattr(freeze, "git_info", lambda *a, **k: {"commit": "abc", "clean": True})
+    monkeypatch.setattr(sys, "argv", ["freeze.py", "--record", "--commit", "abc", "--dry-from", DATE])
+    assert freeze.main() == 1 and "--dry-to is required" in capsys.readouterr().out

@@ -19,11 +19,17 @@ from app.ledger import Ledger, parse_ts, ts
 NOT_PLAYED_STATUSES = {"postponed", "cancelled", "canceled", "suspended"}
 
 
-def scope_info(ledger: Ledger, scope: str, from_date: Optional[str] = None) -> dict:
+def _is_date(d: Optional[str]) -> bool:
+    return bool(d) and len(d) == 10 and d.replace("-", "").isdigit()
+
+
+def scope_info(ledger: Ledger, scope: str, from_date: Optional[str] = None, to_date: Optional[str] = None) -> dict:
     """scope: 'counted' (after the latest freeze), 'dry' (before any freeze / not counted), or 'all'.
 
     `from_date` (YYYY-MM-DD, ET) starts the evaluated window for 'dry' and 'all': games and records on earlier dates are left out, so a dry run
     that began mid-slate is judged only from its first full slate day. It never applies to 'counted'.
+    `to_date` (inclusive, ET) ends the window the same way, which fixes a dry-run acceptance cohort (for example the first two full slate days)
+    so later slate dates, which keep arriving and have not matured, are neither judged nor able to hold maturity out of reach.
     """
     fr = ledger.latest_freeze()
     first = fr["first_counted_date"] if fr else None
@@ -40,6 +46,10 @@ def scope_info(ledger: Ledger, scope: str, from_date: Optional[str] = None) -> d
         games.append("date_et >= ?")
         recs.append(f"date_et >= '{from_date}'" if len(from_date) == 10 and from_date.replace("-", "").isdigit() else "1=0")
         args.append(from_date)
+    if to_date:
+        games.append("date_et <= ?")
+        recs.append(f"date_et <= '{to_date}'" if _is_date(to_date) else "1=0")
+        args.append(to_date)
     return {"scope": scope, "first_counted_date": first, "freeze_id": None, "rec_where": " AND ".join(recs) or "1=1",
             "game_where": " AND ".join(games) or "1=1", "game_args": tuple(args)}
 
@@ -115,9 +125,9 @@ def settlement_counts(ledger: Ledger, info: dict, now: datetime) -> dict:
 
 
 def coverage_report(ledger: Ledger, scope: str = "counted", now: Optional[datetime] = None, *, dry_run: bool = False, check_chain: bool = True,
-                    from_date: Optional[str] = None) -> dict:
+                    from_date: Optional[str] = None, to_date: Optional[str] = None) -> dict:
     now = now or datetime.now(timezone.utc)
-    info = scope_info(ledger, scope, from_date)
+    info = scope_info(ledger, scope, from_date, to_date)
     games = game_rows(ledger, info, now)
     pop = [g for g in games if g["in_population"]]
     out_of_pop: Dict[str, int] = {}
@@ -188,10 +198,11 @@ def _by_date(games: List[dict]) -> Dict[str, dict]:
 
 # ---- integrity
 
-def integrity_report(ledger: Ledger, now: Optional[datetime] = None, scope: str = "all", from_date: Optional[str] = None) -> dict:
+def integrity_report(ledger: Ledger, now: Optional[datetime] = None, scope: str = "all", from_date: Optional[str] = None,
+                     to_date: Optional[str] = None) -> dict:
     """Timing and consistency checks on recorded rows. Reads no outcomes."""
     now = now or datetime.now(timezone.utc)
-    info = scope_info(ledger, scope, from_date)
+    info = scope_info(ledger, scope, from_date, to_date)
     problems: List[str] = []
     chain = ledger.verify_chain()
     problems += chain["problems"]
@@ -309,7 +320,7 @@ def game_rows_all_recent(ledger: Ledger, now: datetime) -> List[dict]:
             and now >= (parse_ts(g["tipoff_utc"]) + timedelta(minutes=5))]
 
 
-def dry_run_acceptance(ledger: Ledger, from_date: str, now: Optional[datetime] = None) -> dict:
+def dry_run_acceptance(ledger: Ledger, from_date: str, now: Optional[datetime] = None, to_date: Optional[str] = None) -> dict:
     """The two dry-run stages. Reads statuses and counts only.
 
     Stage 1 `recording` (after two full slate days): coverage and integrity at the dry-run thresholds (95% of games, 95% of contracts),
@@ -320,10 +331,12 @@ def dry_run_acceptance(ledger: Ledger, from_date: str, now: Optional[datetime] =
           >= 90%, void + unresolved <= 10% overall and <= 25% inside any game;
       (c) a settlement run with no errors started at or after the last of those games matured.
     A dry run with nothing matured yet therefore cannot pass stage 2.
+    `to_date` (inclusive ET) fixes the cohort: only slate dates from `from_date` to `to_date` are judged, so the cohort is two slate days (set
+    both to the same two dates) rather than a window that grows with every new slate. No rule or threshold changes.
     """
     now = now or datetime.now(timezone.utc)
-    cov = coverage_report(ledger, "dry", now, dry_run=True, from_date=from_date)
-    integ = integrity_report(ledger, now, "all", from_date)
+    cov = coverage_report(ledger, "dry", now, dry_run=True, from_date=from_date, to_date=to_date)
+    integ = integrity_report(ledger, now, "all", from_date, to_date)
     health = health_report(ledger, now)
     dates = sorted(d for d, v in cov["by_date"].items() if v["covered"] > 0)
     rec = list(cov["recording_reasons"]) + integ["problems"] + health["alerts"]
@@ -342,5 +355,5 @@ def dry_run_acceptance(ledger: Ledger, from_date: str, now: Optional[datetime] =
         ok_runs = [r for r in ledger.settle_runs() if r["errors"] == 0 and (parse_ts(r["run_at"]) or now) >= last]
         if last and not ok_runs:
             fin.append("no error-free settlement run has happened since the last dry-run game matured (run scripts/ledger_daily.py)")
-    return {"from_date": from_date, "slate_dates": dates, "recording": {"ok": not rec, "reasons": rec},
+    return {"from_date": from_date, "to_date": to_date, "slate_dates": dates, "recording": {"ok": not rec, "reasons": rec},
             "final": {"ok": not fin, "reasons": fin}, "coverage": cov, "integrity_ok": integ["ok"], "health_ok": health["ok"]}

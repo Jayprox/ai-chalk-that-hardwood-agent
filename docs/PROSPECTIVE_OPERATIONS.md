@@ -76,12 +76,13 @@ Run it once a day while the test runs (after the daily job), and point `--dest` 
 Dry-run records have no freeze id and never count. Acceptance has two stages (full rules in `PROSPECTIVE_PROTOCOL.md` section 8).
 
 - **Stage 1, recording** (after at least two full slate days; judge from the first full slate date D):
-  `python scripts/ledger_check.py --scope dry --from-date D --stage recording`
+  `python scripts/ledger_check.py --scope dry --from-date D1 --to-date D2 --stage recording`
+  D1 and D2 are the first two full slate days (the fixed cohort). Always pass `--to-date`: the recorder keeps adding later slate dates, and without it the window grows and never matures.
   This proves the recorder worked. It does **not** allow a freeze.
 - **Stage 2, final acceptance:** every game on both slate dates must be 51 h past tip-off (last game's tip-off + 51 h), then run `python scripts/ledger_daily.py` (settles, error-free run recorded), confirm any unresolved contracts you can, and run
-  `python scripts/ledger_check.py --scope dry --from-date D --stage final`
+  `python scripts/ledger_check.py --scope dry --from-date D1 --to-date D2 --stage final`
   It requires: stage 1 passing, all dry-run games matured, at least one matured contract, at least 90% of matured contracts settled or pushed, void + unresolved at most 10% overall and 25% per game, and an error-free settlement run after the last maturity. Nothing matured means no pass.
 
 ## 8. After acceptance (only when JD says go)
 
-`python scripts/freeze.py --build`, review and commit `docs/freeze/manifest.json` with the intended source files, then `python scripts/freeze.py --record --commit <hash> --dry-from D`. After that, no edits to code, parameters or definitions. The single analysis is `python scripts/prospective_analysis.py` at the endpoint, when `ledger_check.py --scope counted` shows 300 covered, matured games.
+`python scripts/freeze.py --build`, review and commit `docs/freeze/manifest.json` with the intended source files, then `python scripts/freeze.py --record --commit <hash> --dry-from D1 --dry-to D2`. After that, no edits to code, parameters or definitions. The single analysis is `python scripts/prospective_analysis.py` at the endpoint, when `ledger_check.py --scope counted` shows 300 covered, matured games.

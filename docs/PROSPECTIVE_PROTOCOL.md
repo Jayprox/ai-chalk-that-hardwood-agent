@@ -63,6 +63,8 @@ One analysis at the **300th covered game** (ordered by tip-off then game id) onc
 
 **Dry-run acceptance has two stages. Neither can pass because nothing has matured.**
 
+*Fixed cohort.* The recorder keeps running and adds new slate dates every day, so an open-ended window would always contain games that have not matured. Acceptance therefore judges a fixed cohort: the first two full slate days, `--from-date D1 --to-date D2` (both inclusive, ET). Games and records after `D2` are neither judged nor able to block acceptance; every rule and threshold inside the cohort is unchanged. The freeze command requires the same cohort (`--dry-from D1 --dry-to D2`).
+
 *Stage 1, recording (after at least two full slate days, judged from `--dry-from`, the first date the recorder ran for the whole slate):* `ledger_check.py --scope dry --from-date D --stage recording`. Passes at the dry-run thresholds (95% of expected games and 95% of observed contracts recorded), every covered game has at least 30 contracts, 8 players and 3 markets, zero records after tip-off, no duplicates, chain and mirror verify, at least 2 slate dates. This proves the recorder worked. It does not allow a freeze.
 
 *Stage 2, final acceptance (`--stage final`):* all of the following, with the thresholds unchanged:
@@ -75,6 +77,6 @@ One analysis at the **300th covered game** (ordered by tip-off then game id) onc
 Freeze steps:
 1. Stage 2 passes.
 2. `python scripts/freeze.py --build` writes `docs/freeze/manifest.json` (constants, model fingerprint, hashes of every core file, this document, the operations document, the plan and the tests). You review and commit it with the intended source files.
-3. `python scripts/freeze.py --record --commit <hash> --dry-from <first full slate date>` refuses unless HEAD is that commit, the files hashed in the manifest are tracked and unmodified, the manifest equals a fresh rebuild, no freeze exists, and stage 2 passes. It appends the freeze record and sets **first counted date = the next ET calendar date after that moment**.
+3. `python scripts/freeze.py --record --commit <hash> --dry-from <first full slate date> --dry-to <second full slate date>` refuses unless HEAD is that commit, the files hashed in the manifest are tracked and unmodified, the manifest equals a fresh rebuild, no freeze exists, and stage 2 passes. It appends the freeze record and sets **first counted date = the next ET calendar date after that moment**.
 4. A record counts only if its date is on or after that date **and** it was written after the freeze record (`freeze_id` is assigned by the ledger itself). Dry-run records and every game examined earlier never count.
 5. After the freeze nothing in the model, parameters, code or definitions changes. During the test, look only at `scripts/ledger_check.py` (integrity and coverage). Not hit rates, not returns.
