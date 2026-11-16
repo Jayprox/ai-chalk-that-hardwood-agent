@@ -167,6 +167,19 @@ def test_health_alerts_for_a_silent_recorder_and_unpolled_games(tmp_path):
     assert any("without a single recorder tick" in a for a in alerts)
 
 
+def test_health_ignores_games_that_tipped_before_the_first_ever_tick_but_coverage_still_counts_them(tmp_path):
+    L = L_(tmp_path)
+    L.register_game({"game_id": "early", "date_et": DATE, "tipoff_utc": ts(TIP), "status": "final", "season_type": "regular"}, ts(TIP - timedelta(hours=9)))
+    L.register_game({"game_id": "later", "date_et": DATE, "tipoff_utc": ts(TIP + timedelta(hours=3)), "status": "final", "season_type": "regular"}, ts(TIP - timedelta(hours=9)))
+    L.add_tick(ts(TIP + timedelta(hours=1)), ts(TIP + timedelta(hours=1)), True, {})        # first tick lands after "early" tipped, before "later" window
+    now = TIP + timedelta(hours=5)
+    alerts = health_report(L, now)["alerts"]
+    assert not any("early" in a for a in alerts)
+    assert any("later" in a and "without a single recorder tick" in a for a in alerts)
+    cov = coverage_report(L, "all", now, check_chain=False)
+    assert "early" in {g["game_id"] for g in cov["uncovered_games"]}
+
+
 def test_freeze_manifest_is_complete_and_contains_no_credentials():
     sys.path.insert(0, str(ROOT / "scripts"))
     freeze = importlib.import_module("freeze")

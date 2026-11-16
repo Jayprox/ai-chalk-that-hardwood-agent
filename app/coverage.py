@@ -302,8 +302,13 @@ def health_report(ledger: Ledger, now: Optional[datetime] = None) -> dict:
     recent_bad = ledger._one("SELECT COUNT(*) AS n FROM ticks WHERE ok=0 AND started_at >= ?", (ts(now - timedelta(hours=3)),))["n"]
     if recent_bad >= 3:
         alerts.append(f"{recent_bad} failed recorder ticks in the last 3 hours")
+    first_tick = ledger._one("SELECT MIN(started_at) AS t FROM ticks")
+    first_tick_at = parse_ts(first_tick["t"]) if first_tick and first_tick["t"] else None
     for g in game_rows_all_recent(ledger, now):
         if g["reason"] == "window_not_polled":
+            tip_at = parse_ts(g["tipoff_utc"])
+            if first_tick_at and tip_at and tip_at <= first_tick_at:
+                continue                      # tipped before the recorder's first-ever tick: nothing could have been polled. Coverage still counts it as uncovered; only the alert is skipped.
             alerts.append(f"game {g['game_id']} tipped without a single recorder tick in its pre-tip window")
         elif g["reason"] in ("no_close_rows_observed", "no_valid_records"):
             alerts.append(f"game {g['game_id']} tipped with no recorded contracts ({g['reason']})")

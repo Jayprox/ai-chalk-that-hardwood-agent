@@ -41,7 +41,7 @@
     const ly = Y(r.line).toFixed(1);
     return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Last ' + n + ' games against the line">' + bars +
       '<line class="threshold" x1="0" x2="' + W + '" y1="' + ly + '" y2="' + ly + '" stroke="#e8ebee" stroke-dasharray="4 3"></line>' +
-      '<text x="' + (W - 2) + '" y="' + (Number(ly) - 4) + '" text-anchor="end" font-size="11" fill="#e8ebee">line ' + esc(r.line) + "</text></svg>" +
+      '<text x="2" y="' + (Number(ly) - 4) + '" text-anchor="start" font-size="11" fill="#e8ebee">line ' + esc(r.line) + "</text></svg>" +
       '<div class="axis"><span>oldest</span><span>blue = over, orange = under, grey = push</span><span>most recent</span></div>';
   }
 
