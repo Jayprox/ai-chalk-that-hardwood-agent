@@ -40,3 +40,11 @@ Proposed comparison (separate script, later; outputs under `data/research/dimers
 4. **Pregame comparison (no results needed):** Dimers mean minus the line, our sim mean minus the line (display store `sims`, not the ledger), and Dimers minus our sim, per market, with counts of unmatched players on each side.
 5. **After the games:** actual stat from Hardwood game logs; played games only (DNP and missing-stat rows excluded and counted); MAE of Dimers mean, sim mean and the rolling-10 mean on the same intersection of players, reported with player-clustered intervals.
 6. **Not done:** no over/under probabilities inferred from projected means, no hit rates or returns, no claim of superiority. One slate is descriptive evidence only; a second and third slate would be needed before anything stronger is said, and still outside the experiment.
+
+## Dimers file provenance (supplied by JD, 2026-11-15)
+
+- File: `nba_player_projections_1.csv` (194 player rows, columns PTS, REB, AST, 3PM, BLK, STL, TO, PRA, PR, PA, DFS, FB, Last Updated).
+- Retrieved by JD at about 6:00 PM PT on 2026-11-15 (02:00 UTC on 2026-11-16). Source: Dimers; the page URL has not been recorded.
+- Each row carries its own `Last Updated` (UTC), from 2026-11-15T18:08Z to 2026-11-16T01:49Z, so projections are not one simultaneous snapshot.
+- Alignment caveats found on inspection: rows for the three early games (IND@PHI 18:08Z, LAL@PHX 21:04Z, CHA@LAC 21:30Z) were last updated at or just after tip-off, so they may not be pre-tip numbers and must be excluded from any pre-tip comparison unless shown otherwise. One row has an empty first name ("Miller", LAC), so name matching must use team plus last name and flag ambiguity rather than guess.
+- Status: provenance recorded only. No comparison has been run and none is approved.
