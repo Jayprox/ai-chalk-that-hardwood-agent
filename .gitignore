@@ -10,3 +10,6 @@ data/*.db-*
 
 # prospective ledger data and reports (the freeze manifest in docs/freeze/ is committed)
 data/ledger/
+
+# exploratory line-history research output and cached Hardwood responses
+data/research/

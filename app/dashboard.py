@@ -8,6 +8,7 @@ The simulation's probability is raw (the backtests found it overconfident), so o
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 from zoneinfo import ZoneInfo
@@ -16,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.collector import _parse_utc
 from app.scheduler import Schedule, next_collection, game_phase
-from app.config import Settings, now_et
+from app.config import Settings, current_season, now_et
 from app.signal import add_percentiles, is_void
 from app.calibration import FITTED_ON
 from app.sim import sim_view
@@ -182,7 +183,9 @@ def summary_text(p: dict, extra: dict, sim: Optional[dict] = None) -> List[dict]
     m = extra.get("matchup")
     if isinstance(m, dict) and m.get("rank") is not None and m.get("of"):
         vs = f" ({m['vs_avg']:+g} vs the league average)" if isinstance(m.get("vs_avg"), (int, float)) else ""
-        out.append({"title": "Matchup", "text": f"The opponent ranks {m['rank']} of {m['of']} against this stat{vs}."})
+        pos = m.get("position_label") or m.get("position")
+        who = f"{m['opponent']}'s defense" if m.get("opponent") else "The opponent"
+        out.append({"title": "Matchup", "text": f"{who} ranks {m['rank']} of {m['of']} against {pos or 'this position'} for this stat{vs}; 1 means the fewest allowed, so a low rank is a tough matchup."})
     if sim and sim.get("p_over") is not None:
         out.append({"title": "Simulation", "text": f"Simulated from {sim['n_prior']} earlier games (minutes times per-minute rates): about {sim['mean']:.1f} with a spread of {sim['sd']:.1f}. "
                     f"It leans {sim['side'].lower()}{', the same way as the market' if sim['side'] == (p['side'] or '') else ', against the market'}. "
@@ -217,6 +220,76 @@ def build_prop(store: Store, player_id: str, game_id: str, market: str) -> dict:
             "notes": summary_text(shaped, _extra(row), sim)}
 
 
+def last_games(games: List[dict], market: str, line: Any, board_date: str, n: int = 10) -> List[dict]:
+    """The player's last `n` played games before the board date, oldest first, each with the market's stat total and how it compares with the
+    line. Games missing any required statistic are skipped (never counted as zero). Display only; it feeds nothing else."""
+    from app.simulation import MARKET_STATS, is_played
+    stats = MARKET_STATS.get(market)
+    if not stats:
+        return []
+    out: List[dict] = []
+    for g in games:
+        d = g.get("date")
+        if not d or d >= board_date or not is_played(g):
+            continue
+        vals = [g.get(k) for k in stats]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
+            continue
+        out.append({"date": d, "opponent": g.get("opponent"), "venue": g.get("venue"), "minutes": g.get("minutes"), "value": _num(float(sum(vals)))})
+    out.sort(key=lambda r: r["date"])
+    out = out[-n:]
+    for r in out:
+        r["result"] = "push" if r["value"] == float(line) else ("over" if r["value"] > float(line) else "under")
+    return out
+
+
+_RECENT_TTL = 600.0
+_recent_cache: Dict[tuple, tuple] = {}
+_def_cache: Dict[tuple, tuple] = {}
+
+
+async def _def_ranks(hw: Any, opponents: List[str], position: Optional[str], market: str, date_et: str) -> Dict[str, Optional[int]]:
+    """Each opponent's CURRENT defensive rank against the player's position for this market (1 = fewest allowed). Hardwood publishes today's
+    ranking, not the ranking on the night of the game. Any failure leaves that opponent's rank empty; the chart still draws."""
+    import asyncio
+    out: Dict[str, Optional[int]] = {o: None for o in opponents}
+    if not position or not opponents:
+        return out
+    try:
+        teams = await hw.teams()
+    except Exception:  # noqa: BLE001
+        return out
+    ids = {t.get("abbreviation"): t.get("id") for t in teams}
+
+    async def one(abbr: str) -> None:
+        key = (abbr, date_et)
+        hit = _def_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _RECENT_TTL:
+            data = hit[1]
+        else:
+            if ids.get(abbr) is None:
+                return
+            try:
+                data = ((await hw.get("/rankings/matchups", {"team_id": ids[abbr]})).get("data")) or {}
+            except Exception:  # noqa: BLE001
+                return
+            _def_cache[key] = (time.monotonic(), data)
+        try:
+            v = ((data.get(position) or [{}])[0].get("rank") or {}).get(market)
+            out[abbr] = int(v) if v is not None else None
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    await asyncio.gather(*(one(o) for o in opponents))
+    return out
+
+
+def _hw_factory(settings: Settings) -> Any:
+    """A read-only Hardwood client for the last-10 chart (replaced in tests)."""
+    from app.hardwood import HardwoodClient
+    return HardwoodClient(settings.hardwood_base_url, settings.hardwood_api_key)
+
+
 def make_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/dash")
     sched = Schedule.from_settings(settings)
@@ -246,5 +319,42 @@ def make_router(settings: Settings) -> APIRouter:
     @router.get("/prop/{player_id}/{game_id}/{market}")
     def prop(player_id: str, game_id: str, market: str, store: Store = Depends(store_dep)) -> dict:
         return build_prop(store, player_id, game_id, market)
+
+    def prop_row_dep(player_id: str, game_id: str, market: str, store: Store = Depends(store_dep)) -> dict:
+        # a sync dependency: the SQLite connection must be used on the thread that opened it, so the lookup happens here, not in the async route
+        row = store.prop(player_id, game_id, market)
+        if not row:
+            raise HTTPException(status_code=404, detail="Unknown prop.")
+        return row
+
+    @router.get("/recent/{player_id}/{game_id}/{market}")
+    async def recent(player_id: str, game_id: str, market: str, row: dict = Depends(prop_row_dep)) -> dict:
+        """Last 10 played games before the board date against this prop's line, for the bar chart on the player page."""
+        season = current_season(datetime.strptime(row["date_et"], "%Y-%m-%d"))
+        key = (player_id, season, row["date_et"])
+        hit = _recent_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _RECENT_TTL:
+            log = hit[1]
+        else:
+            hw = _hw_factory(settings)
+            try:
+                res = await hw.post("/query", {"entity": "player", "id": player_id, "scope": "game_log", "season": season, "season_type": "regular"})
+                log = res.get("data") or []
+            except Exception:  # noqa: BLE001 - never echo the upstream error text
+                raise HTTPException(status_code=502, detail="Hardwood game log is unavailable right now.")
+            finally:
+                await hw.aclose()
+            _recent_cache[key] = (time.monotonic(), log)
+        games = last_games(log, market, row["line"], row["date_et"])
+        pos = (_extra(row).get("matchup") or {}).get("position")
+        hw2 = _hw_factory(settings)
+        try:
+            ranks = await _def_ranks(hw2, sorted({g["opponent"] for g in games if g.get("opponent")}), pos, market, row["date_et"])
+        finally:
+            await hw2.aclose()
+        for g in games:
+            g["def_rank"] = ranks.get(g.get("opponent"))
+        counts = {k: sum(1 for g in games if g["result"] == k) for k in ("over", "under", "push")}
+        return {"line": _num(row["line"]), "market": market, "market_label": MARKET_LABEL.get(market, market), "season": season, "games": games, "position": pos, **counts}
 
     return router

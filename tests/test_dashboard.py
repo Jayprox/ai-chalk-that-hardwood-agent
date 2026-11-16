@@ -153,3 +153,115 @@ def test_prop_detail_carries_the_distribution_and_a_simulation_note(tmp_path):
     assert "12 earlier games" in note["text"] and "overconfident" in note["text"] and "shrunk" in note["text"]
     other = TestClient(app).get(f"/api/dash/prop/p8/{G1}/pts").json()
     assert other["sim"] is None and next(n for n in other["notes"] if n["title"] == "Simulation")["text"].startswith("Not run yet")
+
+
+# ---- last-10 bar chart data (display only)
+
+def _g(date, pts, reb=0, ast=0, minutes=30, **kw):
+    return {"date": date, "opponent": "SAC", "venue": "home", "minutes": minutes, "pts": pts, "reb": reb, "ast": ast, **kw}
+
+
+def test_last_games_takes_the_last_ten_played_before_the_board_date_oldest_first():
+    from app.dashboard import last_games
+    log = [_g(f"2026-11-{d:02d}", 10 + d) for d in range(1, 13)]            # 12 games, Nov 1..12
+    log.append(_g("2026-11-13", 99))                                        # the board date itself is excluded
+    log.append(_g("2026-11-05", 0, minutes=0))                              # did not play: skipped, never a zero
+    out = last_games(log, "pts", 17.5, "2026-11-13")
+    assert [g["date"] for g in out] == [f"2026-11-{d:02d}" for d in range(3, 13)]
+    assert out[0]["value"] == 13 and out[-1]["value"] == 22
+    assert [g["result"] for g in out] == ["under"] * 5 + ["over"] * 5       # values 13..22 against 17.5
+
+
+def test_last_games_combo_markets_need_every_component_and_a_tie_is_a_push():
+    from app.dashboard import last_games
+    log = [_g("2026-11-01", 10, 4, 3.5 - 0.5), _g("2026-11-02", 10, 5, None), _g("2026-11-03", 8, 6, 3)]
+    out = last_games(log, "pra", 17, "2026-11-13")
+    assert [g["date"] for g in out] == ["2026-11-01", "2026-11-03"]         # the game missing assists is skipped, not zero-filled
+    assert [g["value"] for g in out] == [17, 17] and [g["result"] for g in out] == ["push", "push"]
+    assert last_games(log, "nope", 17, "2026-11-13") == []
+
+
+class _FakeLogHW:
+    calls = 0
+
+    def __init__(self, log=None, fail=False):
+        self.log, self.fail = log, fail
+
+    async def post(self, path, body):
+        type(self).calls += 1
+        assert body["scope"] == "game_log" and body["season_type"] == "regular" and body["season"] == "2026-27"
+        if self.fail:
+            raise RuntimeError("secret upstream detail")
+        return {"data": self.log}
+
+    async def teams(self):
+        return [{"id": 1, "abbreviation": "SAC"}, {"id": 2, "abbreviation": "PHX"}]
+
+    async def get(self, path, params=None):
+        assert path == "/rankings/matchups"
+        if params["team_id"] == 2:
+            raise RuntimeError("down")
+        return {"data": {"C": [{"rank": {"pts": 7, "pra": 5}}], "G": [{"rank": {"pts": 30}}]}}
+
+    async def aclose(self):
+        pass
+
+
+def test_def_ranks_use_the_players_position_and_market_and_tolerate_failures():
+    import app.dashboard as dash
+    dash._def_cache.clear()
+    out = asyncio.run(dash._def_ranks(_FakeLogHW(), ["SAC", "PHX", "ZZZ"], "C", "pra", DATE))
+    assert out == {"SAC": 5, "PHX": None, "ZZZ": None}
+    assert asyncio.run(dash._def_ranks(_FakeLogHW(), ["SAC"], None, "pra", DATE)) == {"SAC": None}
+
+
+def test_recent_endpoint_returns_counts_caches_and_hides_upstream_errors(client, monkeypatch):
+    import app.dashboard as dash
+    dash._recent_cache.clear()
+    _FakeLogHW.calls = 0
+    log = [_g(f"2026-11-{d:02d}", 8 + d) for d in range(1, 11)]             # values 9..18; the line for Player 3 is 13.5
+    monkeypatch.setattr(dash, "_hw_factory", lambda s: _FakeLogHW(log))
+    pid = next(p for p in client.get("/api/dash/market/pts", params={"date": DATE}).json()["props"] if p["name"] == "Player 3")
+    url = f"/api/dash/recent/{pid['player_id']}/{pid['game_id']}/pts"
+    r = client.get(url).json()
+    assert r["line"] == 13.5 and len(r["games"]) == 10 and (r["over"], r["under"], r["push"]) == (5, 5, 0)
+    client.get(url)
+    assert _FakeLogHW.calls == 1                                           # second view is served from the cache
+    dash._recent_cache.clear()
+    monkeypatch.setattr(dash, "_hw_factory", lambda s: _FakeLogHW(fail=True))
+    bad = client.get(url)
+    assert bad.status_code == 502 and "secret" not in bad.text
+    assert client.get("/api/dash/recent/nobody/none/pts").status_code == 404
+
+
+def test_recent_endpoint_follows_a_moved_line_without_refetching_the_game_log(tmp_path, monkeypatch):
+    import app.dashboard as dash
+    dash._recent_cache.clear()
+    _FakeLogHW.calls = 0
+    log = [_g(f"2026-11-{d:02d}", 8 + d) for d in range(1, 11)]             # values 9..18
+    monkeypatch.setattr(dash, "_hw_factory", lambda s: _FakeLogHW(log))
+    db = tmp_path / "moved.db"
+    store = Store(db)
+
+    def at(line, hours):
+        asyncio.run(collect_once(FakeHW({"pts": [row("p3", game=G1, name="Player 3", line=line, over=-110, under=-110, last10={"over": 6, "under": 4})]}), store, DATE, NOW + timedelta(hours=hours)))
+
+    at(13.5, 0)
+    store.close()
+    c = TestClient(create_app(settings(db_path=db), anthropic_client=FakeAnthropic([message_sse([text_block("hi")])]).client(), hardwood=ChatHW({}).client()))
+    url = f"/api/dash/recent/p3/{G1}/pts"
+    first = c.get(url).json()
+    assert first["line"] == 13.5 and (first["over"], first["under"]) == (5, 5)
+    store = Store(db)
+    at(15.5, 2)                                                             # the line moves later the same day
+    store.close()
+    second = c.get(url).json()
+    assert second["line"] == 15.5 and (second["over"], second["under"], second["push"]) == (3, 7, 0)
+    assert [g["result"] for g in second["games"]].count("over") == 3
+    assert _FakeLogHW.calls == 1                                            # outcomes re-scored from the cached log, not refetched
+
+
+def test_dashboard_page_loads_the_chart_helper_before_the_main_script(client):
+    html = client.get("/dash").text
+    assert html.index("/static/recent_chart.js") < html.index("/static/dash.js")
+    assert client.get("/static/recent_chart.js").status_code == 200

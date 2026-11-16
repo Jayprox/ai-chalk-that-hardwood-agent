@@ -156,17 +156,55 @@
       '<div class="faint" style="font-size:12px">Rank is each prop\'s percentile within its own market across the whole board, not within this game.</div>';
   }
 
+  // ---- last-10 bar chart (display only; fetched from Hardwood on demand). Drawing and caching live in recent_chart.js.
+  const RC = window.RecentChart;
+  const recentCache = RC.makeCache();
+  const recentInflight = {};
+  let recentSeq = 0;
+  function recentBlock(p) {
+    const c = recentCache.get(RC.keyOf(p));
+    return '<div class="chart"><div class="between"><span class="k">Last 10 games vs the line</span><span class="sub" id="l10sub">' + (c ? esc(RC.sub(c)) : "") + "</span></div>" +
+      '<div id="l10body" data-key="' + esc(RC.keyOf(p)) + '">' + (c ? RC.chart(c) : '<div class="faint">Loading…</div>') + "</div>" +
+      '<div class="faint" style="font-size:12px">Current season, games played before this date, from Hardwood. DEF = the opponent&#39;s defensive rank against this player&#39;s position for this stat (1 = fewest allowed, 30 = most), as ranked today, not on the night of the game. Minutes are what he actually played that night, shown as context; they were not known before tip-off. Display only.</div></div>';
+  }
+  async function loadRecent(p) {
+    const key = RC.keyOf(p), mine = ++recentSeq;
+    if (recentCache.get(key)) return;
+    let html, sub = "";
+    try {
+      const url = "/recent/" + [p.player_id, p.game_id, p.market].map(encodeURIComponent).join("/");
+      const r = await (recentInflight[key] || (recentInflight[key] = api(url).finally(() => { delete recentInflight[key]; })));
+      // If the line moved while we were fetching, the answer is for the new line: file it under that line's key, never the old one.
+      recentCache.set(RC.keyOf(Object.assign({}, p, { line: r.line })), r);
+      html = RC.chart(r); sub = RC.sub(r);
+    } catch (e) { html = '<div class="faint">Last-10 chart unavailable: ' + esc(e.message) + "</div>"; }
+    const body = $("l10body");
+    // A newer view of the page (another prop, or a newer line) started after this request: drop this late answer.
+    if (mine !== recentSeq || !body || body.dataset.key !== key) return;
+    body.innerHTML = html; if ($("l10sub")) $("l10sub").textContent = sub;
+  }
+
+  const ordinal = (n) => n + (["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]);
+  function defTile(p, ex) {
+    const m = ex.matchup;
+    if (!m || m.rank == null || !m.of) return ["Defense", "—", "no ranking for this matchup"];
+    const vs = typeof m.vs_avg === "number" ? " (" + (m.vs_avg > 0 ? "+" : "") + m.vs_avg + " vs avg)" : "";
+    const pos = m.position_label || m.position || "this position";
+    return ["Defense vs " + esc(pos), ordinal(m.rank) + " of " + m.of,
+      esc(m.opponent || p.opponent) + " allows " + (m.allowed != null ? esc(m.allowed) : "—") + vs + " · 1st = toughest"];
+  }
+
   function viewProp(d) {
     const p = d.prop, h = d.history, ex = d.extra || {};
     const pov = p.p_over == null ? "—" : (100 * p.p_over).toFixed(1) + "%";
     const l10 = ex.last10 && ex.last10.over != null ? ex.last10.over + " over · " + ex.last10.under + " under" : "—";
     const stats = [["Line", esc(p.line), p.open_line != null ? "open " + esc(p.open_line) + (p.snapshot_kind === "close" ? " · closing line captured" : "") : ""],
-      ["Prices", esc(prices(p)), "over / under"], ["Market P(over)", pov, "price with the margin removed"], ["Last 10 vs line", esc(l10), "from Hardwood"], ["Sim P(over)", d.sim && d.sim.p_over != null ? (100 * d.sim.p_over).toFixed(0) + "%" : "—", d.sim ? "shrunk toward 50/50 (raw " + (100 * d.sim.p_over_raw).toFixed(0) + "%); read the direction" : "no simulation yet"]]
+      ["Prices", esc(prices(p)), "over / under"], ["Market P(over)", pov, "price with the margin removed"], ["Last 10 vs line", esc(l10), "from Hardwood"], defTile(p, ex), ["Sim P(over)", d.sim && d.sim.p_over != null ? (100 * d.sim.p_over).toFixed(0) + "%" : "—", d.sim ? "shrunk toward 50/50 (raw " + (100 * d.sim.p_over_raw).toFixed(0) + "%); read the direction" : "no simulation yet"]]
       .map((s) => '<div class="stat"><span class="k">' + s[0] + "</span><b>" + s[1] + '</b><span class="sub">' + s[2] + "</span></div>").join("");
     const notes = d.notes.map((n) => "<h3>" + esc(n.title) + "</h3><p>" + esc(n.text) + "</p>").join("");
     return '<a class="back" href="#/m/' + encodeURIComponent(p.market) + '">← ' + esc(p.market_label) + "</a>" +
       '<div class="hero' + (p.strong ? " strong" : "") + '"><div><h2>' + esc(p.name) + '</h2><div class="muted">' + esc(p.team) + " vs " + esc(p.opponent) + " · " + esc(p.tip || "") + " · " + esc(p.market_label) + '</div></div><div style="display:flex;align-items:center;gap:16px"><span class="big" style="font-size:36px">' + esc(p.line) + "</span>" + cardLabel(p) + "</div></div>" +
-      '<div class="cols"><div class="left"><div class="stats">' + stats + "</div>" +
+      '<div class="cols"><div class="left"><div class="stats">' + stats + "</div>" + recentBlock(p) +
       '<div class="chart"><div class="between"><span class="k">Line over time (changes only)</span><span class="sub">' + esc(moveText(p)) + "</span></div>" + series(h, "line", "var(--over)", true, "Line history") + "</div>" +
       '<div class="chart"><div class="between"><span class="k">Market tilt over time (our own snapshots)</span><span class="sub">' + esc(p.side || "") + " · " + rank(p) + " · tilt " + tilt(p) + " pts</span></div>" + series(h, "tilt", p.side === "OVER" ? "var(--over)" : "var(--under)", false, "Tilt history") + "</div>" +
       (d.sim ? '<div class="chart"><div class="between"><span class="k">Simulated distribution (raw, before shrinking)</span><span class="sub">mean ' + d.sim.mean.toFixed(1) + " ± " + d.sim.sd.toFixed(1) + " · " + d.sim.n_prior + " earlier games</span></div>" + pmfChart(d.sim) + "</div>" : "") + "</div>" +
@@ -199,20 +237,24 @@
     if (o.fallback) { n.hidden = false; n.textContent = "No data for " + o.requested + " yet. Showing " + o.date + "."; } else { n.hidden = true; }
   }
 
+  let loadSeq = 0;
   async function load() {
+    const seq = ++loadSeq;
     const r = route();
     const key = r.name + (r.market || "") + (r.id || "") + (r.pid || "") + (r.gid || "");
     if (key !== lastRouteKey) { filters = { game: "all", market: "all" }; lastRouteKey = key; }
     try {
       const o = await api("/overview");
       renderStatus(o);
-      let html = "", active = "games";
+      let html = "", active = "games", recentFor = null;
       if (r.name === "games") html = viewGames(o);
       else if (r.name === "market") { active = r.market; html = viewMarket(await api("/market/" + encodeURIComponent(r.market))); }
       else if (r.name === "game") html = viewGame(await api("/game/" + encodeURIComponent(r.id)));
-      else { active = r.market; html = viewProp(await api("/prop/" + [r.pid, r.gid, r.market].map(encodeURIComponent).join("/"))); }
+      else { active = r.market; const d = await api("/prop/" + [r.pid, r.gid, r.market].map(encodeURIComponent).join("/")); recentFor = d.prop; html = viewProp(d); }
+      if (seq !== loadSeq) return;                   // a newer load started while this one was waiting: drop this one
       renderTabs(o, active);
       $("app").innerHTML = html;
+      if (recentFor && $("l10body")) loadRecent(recentFor);
     } catch (e) {
       $("app").innerHTML = '<div class="empty">Could not load this view: ' + esc(e.message) + "</div>";
     }
