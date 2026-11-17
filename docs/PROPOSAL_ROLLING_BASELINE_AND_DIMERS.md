@@ -48,3 +48,10 @@ Proposed comparison (separate script, later; outputs under `data/research/dimers
 - Each row carries its own `Last Updated` (UTC), from 2026-11-15T18:08Z to 2026-11-16T01:49Z, so projections are not one simultaneous snapshot.
 - Alignment caveats found on inspection: rows for the three early games (IND@PHI 18:08Z, LAL@PHX 21:04Z, CHA@LAC 21:30Z) were last updated at or just after tip-off, so they may not be pre-tip numbers and must be excluded from any pre-tip comparison unless shown otherwise. One row has an empty first name ("Miller", LAC), so name matching must use team plus last name and flag ambiguity rather than guess.
 - Status: provenance recorded only. No comparison has been run and none is approved.
+
+## Dimers file 2 provenance (2026-11-16)
+
+- File: `nba_player_projections_3.csv` (185 rows), from dimers.com/nba/player-projections, downloaded by JD about 9:43 AM PT on 2026-11-16 (screenshot shows the page header "Last update November 16, 2026, 12:16 PM ET").
+- Every row's `Last Updated` is 16:17:06Z to 16:17:08Z (11:17 AM ET), one snapshot. The one-hour gap between the page header and the row timestamps is unexplained.
+- All 8 games of the slate tip at 7:00 PM ET or later, so every row is pre-tip.
+- Descriptive comparison run on this file (agreement only, no outcomes read): outputs in `data/research/dimers_2026-11-16_*` (git-ignored). JD approved running it on 2026-11-16. The comparison proposal as a whole is still not an experiment and does not count toward prospective validation.
