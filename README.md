@@ -39,7 +39,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 python -m pytest -q
 ```
 
-108 tests run offline (Python 3.9 and later). `tests/test_evals.py` covers the eval grading logic with fake data.
+142 tests run offline (Python 3.9 and later). `tests/test_evals.py` covers the eval grading logic with fake data.
 
 They run offline. The agent tests drive the real Anthropic SDK against a mocked HTTP transport, and the Hardwood tests use a mocked API, so no keys or network are needed. They do **not** prove the live services behave the same way (see "Not verified yet").
 
@@ -122,10 +122,37 @@ All optional except the two keys. Set in `.env`; values there override variables
 The first live runs confirmed web search, the Hardwood key, the page and answer quality. Still open:
 
 1. **Prompt caching savings.** Cached reads appear in the log and footer, but how much it saves on your usual questions is only an estimate so far (about 37% on one props board). The cache-write price is an assumption.
-2. **The answer audit on live answers.** The decimal audit and the prop row check raised no false alarms on the live runs of 2026-11-13 (one nine-game slate). Other slates are untested. If either cries wolf on correct answers, loosen it in `app/verify.py`; if it stays silent while errors slip through, that is the "net, not proof" limit.
+2. **The answer audit on live answers.** The decimal audit and the prop row check raised no false alarms on the live runs of 2026-11-13 (one slate). Other slates are untested. If either cries wolf on correct answers, loosen it in `app/verify.py`; if it stays silent while errors slip through, that is the "net, not proof" limit.
 3. **The eval rules.** They were written against the mocked data and the answers seen so far. The first live run may fail a case for a reason that is the rule's fault; read the saved answer before blaming the agent.
 4. **The cost guard default** ($1 per question) is far above anything seen (about $0.43 for the most expensive single question, a full props board at default settings), so it only catches runaways.
 
 ## Likely next steps
 
 Move the loop onto the Claude Agent SDK (the tool functions in `app/hardwood.py` can be reused as-is), add the NFL and the other Chalk That apps as tool sets, and carry tool results across turns.
+
+## Props dashboard (in progress)
+
+Milestone 3 adds the scheduler, so the page updates itself:
+
+    python -m app.scheduler --status        # what is due, and when (collects nothing)
+    python -m app.scheduler --once          # one tick: collect whatever is due, then exit
+    python -m app.scheduler --loop --early-min 2 --active-min 1 --window-hours 24    # foreground test with short intervals
+    python -m app.scheduler --print-launchd > ~/Library/LaunchAgents/com.chalkthat.props-scheduler.plist
+
+Every 2 hours early in the day, then every 30 minutes starting 3 hours before each game's tip-off, until tip-off. After tip-off it checks hourly only to pick up final scores and results, and stops once every game is final. A failed collection retries after 10 minutes. All of it is set in `.env` (see `.env.example`). The launchd job runs a tick every 5 minutes and each tick decides whether anything is due, so a sleeping computer just collects on the next tick. The dashboard header shows the next expected collection, and says so when a collection is overdue.
+
+Milestone 2 adds the page. After a collection, start the server and open the dashboard:
+
+    uvicorn app.main:app --host 127.0.0.1 --port 8000
+    open http://127.0.0.1:8000/dash
+
+Tabs: Games (default), then the ten markets. Click a game for its props, click a prop for its line and tilt history and notes. Props that finish show hit, miss or DNP (void). The green border currently means the top 10% of its market by tilt; the simulation has not been added, so the sim-agrees condition is pending. `?date=YYYY-MM-DD` picks a day, and the page falls back to the latest date with data. The chat agent is still at `/`.
+
+Milestone 1 (the collector):
+
+Milestone 1 is a one-shot collector that pulls all ten Chalk That prop markets for a date and stores them in SQLite (`data/props.db`, git-ignored):
+
+    python -m app.collector                 # today's board (US Eastern)
+    python -m app.collector --date 2026-11-14 --top 15
+
+It makes 11 read-only Hardwood calls (no model calls, no cost). "Signal strength" is how many percentage points the devigged market price leans off 50/50 on its favored side. It is descriptive and **unvalidated**: the backtests found the market price is the strongest signal and our simulation adds nothing measurable beyond it. Props that disappear from a board are marked inactive, an empty board never wipes anything, and a prop's history only grows when its line or prices change.

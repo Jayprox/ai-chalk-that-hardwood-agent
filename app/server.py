@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .agent import ResearchAgent
 from .config import ROOT, Settings, load_settings
+from .dashboard import make_router
 from .hardwood import HardwoodClient
 
 MAX_HISTORY = 20  # messages sent to the model per question (the browser keeps the full chat)
@@ -119,6 +120,12 @@ def create_app(settings: Optional[Settings] = None, *, anthropic_client: Any = N
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
+
+    app.include_router(make_router(settings))
+
+    @app.get("/dash")
+    async def dash() -> FileResponse:
+        return FileResponse(static_dir / "dash.html", headers={"Cache-Control": "no-store"})
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     return app

@@ -32,6 +32,20 @@ class Settings:
     thinking: str = "adaptive"  # adaptive = the model's default reasoning; off = no up-front reasoning (progress notes between tools only)
     prompt_cache: bool = True  # cache the tools, system prompt and conversation so repeated tool rounds cost far less
     log_path: Optional[Path] = None
+    db_path: Path = ROOT / "data" / "props.db"  # SQLite file for the props dashboard (DB_PATH overrides)
+    # Collection schedule (config only). Early in the day the board is refreshed every COLLECT_EARLY_MIN minutes; from
+    # COLLECT_WINDOW_HOURS before a game's tip-off every COLLECT_ACTIVE_MIN minutes, until tip-off; then every
+    # COLLECT_SETTLE_MIN minutes only to pick up final scores and results.
+    collect_early_min: int = 120
+    collect_active_min: int = 30
+    collect_window_hours: float = 3.0
+    collect_settle_min: int = 60
+    collect_retry_min: int = 10
+    sim_enabled: bool = True  # run the simulation enrichment after each collection (SIM_ENABLED=false turns it off)
+    # Prospective validation ledger (off by default). When on, every scheduler tick also runs the pregame recorder (app/record.py).
+    ledger_enabled: bool = False
+    ledger_path: Path = ROOT / "data" / "ledger" / "ledger.db"
+    ledger_mirror_dir: Path = ROOT / "data" / "ledger" / "mirror"
 
 
 def _int(env: Mapping[str, str], key: str, default: int, lo: int, hi: int) -> int:
@@ -68,6 +82,22 @@ def _choice(env: Mapping[str, str], key: str, allowed: tuple, default: str) -> s
     return raw
 
 
+def _db_path(env: Mapping[str, str]) -> Path:
+    raw = (env.get("DB_PATH") or "").strip()
+    if not raw:
+        return ROOT / "data" / "props.db"
+    p = Path(raw)
+    return p if p.is_absolute() else ROOT / p
+
+
+def _path(env: Mapping[str, str], key: str, default: Path) -> Path:
+    raw = (env.get(key) or "").strip()
+    if not raw:
+        return default
+    p = Path(raw)
+    return p if p.is_absolute() else ROOT / p
+
+
 def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
     """Read settings. With no argument, load ./.env (it wins over the shell environment)."""
     if env is None:
@@ -98,6 +128,16 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> Settings:
         thinking=_choice(env, "THINKING", ("adaptive", "off"), "adaptive"),
         prompt_cache=(env.get("PROMPT_CACHE") or "true").strip().lower() not in ("0", "false", "no", "off"),
         log_path=log_path,
+        db_path=_db_path(env),
+        collect_early_min=_int(env, "COLLECT_EARLY_MIN", 120, 1, 1440),
+        collect_active_min=_int(env, "COLLECT_ACTIVE_MIN", 30, 1, 720),
+        collect_window_hours=_float(env, "COLLECT_WINDOW_HOURS", 3.0, 0.1, 24.0),
+        collect_settle_min=_int(env, "COLLECT_SETTLE_MIN", 60, 1, 1440),
+        collect_retry_min=_int(env, "COLLECT_RETRY_MIN", 10, 1, 240),
+        sim_enabled=(env.get("SIM_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off"),
+        ledger_enabled=(env.get("LEDGER_ENABLED") or "false").strip().lower() in ("1", "true", "yes", "on"),
+        ledger_path=_path(env, "LEDGER_PATH", ROOT / "data" / "ledger" / "ledger.db"),
+        ledger_mirror_dir=_path(env, "LEDGER_MIRROR_DIR", ROOT / "data" / "ledger" / "mirror"),
     )
     if settings.thinking == "off" and settings.effort in ("xhigh", "max"):
         raise ValueError("THINKING=off only works with EFFORT low, medium or high (the API rejects it at xhigh and max)")
